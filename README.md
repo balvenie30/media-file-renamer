@@ -108,7 +108,7 @@ Error: This file doesn't have DateTimeOriginal value
 
 ----------------------------------------
 ✅  Renamed: 1
-⚠️   Skipped: 1
+⚠️  Skipped: 1
 ❌  Errors:  1
 ----------------------------------------
 ```

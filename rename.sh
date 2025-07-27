@@ -1,143 +1,253 @@
 #!/bin/bash
 
-# Simple script that renames media files
-# It renames photo and video files that have EXIF metadata (Exchangeable image file format)
-# (If you want to know more about EXIF metadata, see https://www.cipa.jp/e/std/std-sec.html)
+# Media File Renamer
+# =================
+# This script renames photo and video files based on their EXIF metadata
+# (Exchangeable Image File Format). It extracts the DateTimeOriginal and
+# SubSecTimeOriginal values to create standardized filenames.
+#
+# For more information about EXIF metadata, see:
+# https://www.cipa.jp/e/std/std-sec.html
+#
 # Usage: ./rename.sh [path to a file or directory]
-# e.g. ./rename.sh /home/user1/photos/2024-01-01_12-00-00-0000.jpg
-# e.g. ./rename.sh /home/user2/photos/
+# Examples:
+#   ./rename.sh /home/user1/photos/2024-01-01_12-00-00-0000.jpg
+#   ./rename.sh /home/user2/photos/
 
 # Exit on any error
 set -e
 
-# Colors
-COLOR_PROCESS='\033[0;36m'  # Cyan
-COLOR_SUCCESS='\033[0;32m'  # Green
-COLOR_ERROR='\033[0;31m'    # Red
-COLOR_WARNING='\033[1;33m'  # Yellow
-COLOR_ORIGINAL='\033[0;35m' # Magenta
-COLOR_RESET='\033[0m'				# Resets color
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 
-# Check exiftool
-if ! command exiftool -ver &> /dev/null; then
-	echo -e "${COLOR_ERROR}Error: exiftool not found. Install with: brew install exiftool${COLOR_RESET}"
-	exit 1
-fi
+# Color definitions for output formatting (improved readability)
+readonly COLOR_PROCESS='\033[1;34m'   # Bold Blue
+readonly COLOR_SUCCESS='\033[1;32m'   # Bold Green
+readonly COLOR_ERROR='\033[1;31m'     # Bold Red
+readonly COLOR_WARNING='\033[1;33m'   # Bold Yellow
+readonly COLOR_ORIGINAL='\033[1;36m'  # Bold Cyan
+readonly COLOR_INFO='\033[0;37m'      # Light Gray for general info
+readonly COLOR_RESET='\033[0m'        # Reset color
 
-# Parse arguments
-path=$1
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
-# Check if the path exists and is a file
-if [[ -f "$path" ]]; then
-  filename=$(basename "$path")
+# Print colored output with improved formatting
+print_info() {
+    echo -e "${COLOR_INFO}$1${COLOR_RESET}"
+}
 
-  # Extract date, time, subseconds and extension: exiftool -d "%Y%m%d_%H%M%S" -DateTimeOriginal -SubSecTimeOriginal -FileTypeExtension -s3 de.jpg
-  # Store the output in variables
-  datetime=$(exiftool -d "%Y%m%d_%H%M%S" -DateTimeOriginal -s3 "$path")
-  subsec=$(exiftool -SubSecTimeOriginal -s3 "$path")
-  extension=$(exiftool -FileTypeExtension -s3 "$path")
+print_success() {
+    echo -e "${COLOR_SUCCESS}$1${COLOR_RESET}"
+}
 
-  # Check if datetime was extracted successfully
-  if [[ -z "$datetime" ]]; then
-    echo -e "${COLOR_ERROR}Error: This file doesn't have DateTimeOriginal value${COLOR_RESET}"
-    exit 1
-  fi
+print_error() {
+    echo -e "${COLOR_ERROR}Error: $1${COLOR_RESET}"
+}
 
-  # Assign 0 to subsec if it's empty
-  if [[ -z "$subsec" ]]; then
-    subsec="0"
-  fi
+print_warning() {
+    echo -e "${COLOR_WARNING}$1${COLOR_RESET}"
+}
 
-  # Format the new filename
-  new_filename="${datetime}_${subsec}.${extension}"
-	echo -e "${COLOR_ORIGINAL}Original name: $filename${COLOR_RESET}"
-  echo -e "${COLOR_PROCESS}New name: $new_filename${COLOR_RESET}"
+print_original() {
+    echo -e "${COLOR_ORIGINAL}$1${COLOR_RESET}"
+}
 
-  # Ask the user if they want to rename the file
-  read -p "Rename file? (y/n): " -r
-  if [[ $REPLY =~ ^[Yy]$ ]]; then
-    mv "$path" "$(dirname "$path")/$new_filename"
-    echo -e "${COLOR_SUCCESS}File renamed successfully!${COLOR_RESET}"
-  else
-    echo -e "${COLOR_ERROR}Rename cancelled.${COLOR_RESET}"
-  fi
+print_process() {
+    echo -e "${COLOR_PROCESS}$1${COLOR_RESET}"
+}
 
-# if the path is a directory, process the files in the directory
-elif [[ -d "$path" ]]; then
-	# get the list of files in the directory
-	files=($(find "$path" -type f))
-	echo -e "Number of files to process: ${#files[@]}"
+# Check if exiftool is installed
+check_exiftool() {
+    if ! command exiftool -ver &> /dev/null; then
+        print_error "exiftool not found. Install with: brew install exiftool"
+        exit 1
+    fi
+}
 
-	echo -e "Files:"
-	printf '  %s\n' "${files[@]}"
-	echo "----------------------------------------"
+# Extract EXIF metadata from a file
+extract_exif_data() {
+    local file="$1"
+    
+    local datetime=$(exiftool -d "%Y%m%d_%H%M%S" -DateTimeOriginal -s3 "$file" 2>/dev/null || echo "")
+    local subsec=$(exiftool -SubSecTimeOriginal -s3 "$file" 2>/dev/null || echo "")
+    local extension=$(exiftool -FileTypeExtension -s3 "$file" 2>/dev/null || echo "")
+    
+    # Set default value for subsec if empty
+    if [[ -z "$subsec" ]]; then
+        subsec="0"
+    fi
+    
+    echo "$datetime|$subsec|$extension"
+}
 
-	# ask the user if they want to rename the files
-	while true; do
-		echo -e "${COLOR_WARNING}Press Ctrl+C to cancel at any time${COLOR_RESET}"
-		read -p "Rename files? (y/n): " -r
-		if [[ $REPLY =~ ^[Yy]$ ]]; then
-			# if y, rename the files
-			echo "Starting file processing..."
-			break
-		elif [[ $REPLY =~ ^[Nn]$ ]]; then
-			# if n, exit
-			echo -e "${COLOR_WARNING}Operation cancelled by user.${COLOR_RESET}"
-			exit 0
-		else
-			echo -e "${COLOR_ERROR}Invalid input. Please enter 'y' or 'n'.${COLOR_RESET}"
-		fi
-	done
+# Generate new filename from EXIF data
+generate_new_filename() {
+    local datetime="$1"
+    local subsec="$2"
+    local extension="$3"
+    
+    echo "${datetime}_${subsec}.${extension}"
+}
 
-	# count renamed files
-	renamed_files=0
-	# count unchanged files
-	unchanged_files=0
-	# count files with error
-	files_with_error=0
+# Ask user for confirmation
+ask_confirmation() {
+    local message="$1"
+    while true; do
+        read -p "$message (y/n): " -r
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            return 0
+        elif [[ $REPLY =~ ^[Nn]$ ]]; then
+            return 1
+        else
+            print_error "Invalid input. Please enter 'y' or 'n'."
+        fi
+    done
+}
 
-	# iterate on the list
-	for file in "${files[@]}"; do
-		# print the file name to tell the user which file the script is working on
-		# echo -e "${COLOR_WARNING}Processing file: $file${COLOR_RESET}"
-		echo -e "${COLOR_WARNING}Processing file:${COLOR_RESET} $file"
+# =============================================================================
+# FILE PROCESSING FUNCTIONS
+# =============================================================================
 
-		# get the value of `Date/Time Original` and `Sub Sec Time Original`
-		datetime=$(exiftool -d "%Y%m%d_%H%M%S" -DateTimeOriginal -s3 "$file" 2>/dev/null || echo "")
-		subsec=$(exiftool -SubSecTimeOriginal -s3 "$file" 2>/dev/null || echo "")
-		extension=$(exiftool -FileTypeExtension -s3 "$file" 2>/dev/null || echo "")
+# Process a single file
+process_single_file() {
+    local file="$1"
+    local filename=$(basename "$file")
+    
+    print_process "Processing file: $file"
+    
+    # Extract EXIF data
+    local exif_data=$(extract_exif_data "$file")
+    local datetime=$(echo "$exif_data" | cut -d'|' -f1)
+    local subsec=$(echo "$exif_data" | cut -d'|' -f2)
+    local extension=$(echo "$exif_data" | cut -d'|' -f3)
+    
+    # Check if datetime was extracted successfully
+    if [[ -z "$datetime" ]]; then
+        print_error "This file doesn't have DateTimeOriginal value"
+        return 1
+    fi
+    
+    # Generate new filename
+    local new_filename=$(generate_new_filename "$datetime" "$subsec" "$extension")
+    
+    # Display filename comparison
+    print_original "Original name: $filename"
+    print_success "New name: $new_filename"
+    
+    # Ask for confirmation and rename
+    if ask_confirmation "Rename file?"; then
+        mv "$file" "$(dirname "$file")/$new_filename"
+        print_success "File renamed successfully!"
+    else
+        print_warning "Rename cancelled."
+    fi
+    
+    return 0
+}
 
-		# if can't get the values, skip. (print that we're skipping)
-		if [[ -z "$datetime" ]]; then
-			echo -e "${COLOR_ERROR}Error:${COLOR_RESET} This file doesn't have DateTimeOriginal value"
-			# count files with error
-			((files_with_error++))
-			continue
-		fi
-		# count renamed files
-		((renamed_files++))
-		# otherwise, rename the file
-		new_filename="${datetime}_${subsec}.${extension}"
-		filename=$(basename "$file")
-		# if filename and new_filename are the same, skip and echo that we're skipping
-		if [[ "$filename" == "$new_filename" ]]; then
-			echo -e "${COLOR_WARNING}Skipping file: $filename (already has correct name)${COLOR_RESET}"
-			((unchanged_files++))
-			continue
-		fi
+# Process multiple files in a directory
+process_directory() {
+    local dir="$1"
+    
+    # Get list of files in directory
+    local files=($(find "$dir" -type f))
+    local file_count=${#files[@]}
+    
+    print_info "Number of files to process: $file_count"
+    echo -e "${COLOR_INFO}Files:${COLOR_RESET}"
+    printf "${COLOR_INFO}  %s${COLOR_RESET}\n" "${files[@]}"
+    echo "----------------------------------------"
+    
+    # Ask for confirmation before processing
+    print_warning "Press Ctrl+C to cancel at any time"
+    if ! ask_confirmation "Rename files?"; then
+        print_warning "Operation cancelled by user."
+        exit 0
+    fi
+    
+    print_process "Starting file processing..."
+    
+    # Initialize counters
+    local renamed_files=0
+    local unchanged_files=0
+    local files_with_error=0
+    
+    # Process each file
+    for file in "${files[@]}"; do
+        echo "Processing file: $file"
+        
+        # Extract EXIF data
+        local exif_data=$(extract_exif_data "$file")
+        local datetime=$(echo "$exif_data" | cut -d'|' -f1)
+        local subsec=$(echo "$exif_data" | cut -d'|' -f2)
+        local extension=$(echo "$exif_data" | cut -d'|' -f3)
+        
+        # Check if datetime was extracted successfully
+        if [[ -z "$datetime" ]]; then
+            print_error "This file doesn't have DateTimeOriginal value"
+            ((files_with_error++))
+            continue
+        fi
+        
+        # Generate new filename
+        local new_filename=$(generate_new_filename "$datetime" "$subsec" "$extension")
+        local filename=$(basename "$file")
+        
+        # Check if filename is already correct
+        if [[ "$filename" == "$new_filename" ]]; then
+            print_warning "Skipping file: $filename (already has correct name)"
+            ((unchanged_files++))
+            continue
+        fi
+        
+        # Rename the file
+        print_process "Original name: $filename"
+        mv "$file" "$(dirname "$file")/$new_filename"
+        print_success "New name:      $new_filename"
+        ((renamed_files++))
+    done
+    
+    # Display summary
+    echo "----------------------------------------"
+    echo -e "${COLOR_SUCCESS}✅  Renamed:  $renamed_files${COLOR_RESET}"
+    echo -e "${COLOR_WARNING}⚠️   Skipped:  $unchanged_files${COLOR_RESET}"
+    echo -e "${COLOR_ERROR}❌  Errors:   $files_with_error${COLOR_RESET}"
+    echo "----------------------------------------"
+}
 
-		echo -e "${COLOR_ORIGINAL}Original name:${COLOR_RESET} $filename"
-		mv "$file" "$(dirname "$file")/$new_filename"
-		echo -e "${COLOR_PROCESS}New name:${COLOR_RESET}      $new_filename"
-	done
+# =============================================================================
+# MAIN SCRIPT
+# =============================================================================
 
-	# show summary
-	echo "----------------------------------------"
-	echo -e "✅  Renamed: ${COLOR_SUCCESS}$renamed_files${COLOR_RESET}"
-	echo -e "⚠️   Skipped: ${COLOR_WARNING}$unchanged_files${COLOR_RESET}"
-	echo -e "❌  Errors:  ${COLOR_ERROR}$files_with_error${COLOR_RESET}"
-	echo "----------------------------------------"
-		
-else
-	echo -e "${COLOR_ERROR}It doesn't exist or is neither file nor directory${COLOR_RESET}"
-fi
+main() {
+    # Check dependencies
+    check_exiftool
+    
+    # Parse arguments
+    local path="$1"
+    
+    # Validate input
+    if [[ -z "$path" ]]; then
+        print_error "Please provide a file or directory path"
+        echo -e "${COLOR_INFO}Usage: $0 [path to a file or directory]${COLOR_RESET}"
+        exit 1
+    fi
+    
+    # Process based on path type
+    if [[ -f "$path" ]]; then
+        # Process single file
+        process_single_file "$path"
+    elif [[ -d "$path" ]]; then
+        # Process directory
+        process_directory "$path"
+    else
+        print_error "Path doesn't exist or is neither file nor directory"
+        exit 1
+    fi
+}
+
+# Run main function with all arguments
+main "$@"
